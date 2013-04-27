@@ -23,7 +23,7 @@ import org.robotframework.javalib.library.AnnotationLibrary;
 @RobotKeywords
 public class LdapLibrary extends AnnotationLibrary {
     
-    public static final String ROBOT_LIBRARY_VERSION = "0.1";
+    public static final String ROBOT_LIBRARY_VERSION = "0.2";
     
     private static LDAPConnection ldapConnection;
     

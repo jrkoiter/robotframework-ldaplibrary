@@ -35,7 +35,7 @@ Usage
 3. Add "LdapLibrary" to your test suite's Settings table, e.g:
    
         *** Settings ***
-        | Library | nl.fuselogic.robotframework.libraries.oim.LdapLibrary |
+        | Library | nl.fuselogic.robotframework.libraries.ldap.LdapLibrary |
 
 5. Run your test suites using Jython/jybot with all libraries in the classpath
 
