@@ -1,0 +1,4 @@
+Example import:
+
+| *Setting* | *Value* |
+| Library   | nl.fuselogic.robotframework.libraries.oim.LdapLibrary |

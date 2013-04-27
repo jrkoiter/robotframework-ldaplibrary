@@ -1,0 +1,6 @@
+LdapLibrary is a library for Robot Framework that provides keywords for
+interacting with an LDAP directory.
+
+= Usage =
+
+Please see this library's README for installation and usage information.
