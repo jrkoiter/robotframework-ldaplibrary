@@ -16,6 +16,7 @@
  
 package nl.fuselogic.robotframework.libraries.ldap;
  
+import com.unboundid.ldap.sdk.Attribute;
 import com.unboundid.ldap.sdk.LDAPConnection;
  
 import com.unboundid.ldap.sdk.LDAPException;
@@ -25,13 +26,19 @@ import com.unboundid.ldap.sdk.SearchResult;
  
 import com.unboundid.ldap.sdk.SearchResultEntry;
 import com.unboundid.ldap.sdk.SearchScope;
+import com.unboundid.util.ssl.SSLUtil;
+import com.unboundid.util.ssl.TrustAllTrustManager;
  
 import java.io.InputStream;
+import java.security.GeneralSecurityException;
  
 import java.util.Arrays;
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
  
 import java.util.Scanner;
+import javax.net.ssl.SSLSocketFactory;
  
 import org.robotframework.javalib.annotation.ArgumentNames;
 import org.robotframework.javalib.annotation.RobotKeyword;
@@ -44,6 +51,9 @@ public class LdapLibrary extends AnnotationLibrary {
     public static final String ROBOT_LIBRARY_VERSION = "0.2";
    
     private static LDAPConnection ldapConnection;
+    
+    private static SSLUtil sslUtil = new SSLUtil(new TrustAllTrustManager());
+    private static SSLSocketFactory sslSocketFactory;
    
     public LdapLibrary(List<String> list) {
         super(list);
@@ -66,20 +76,81 @@ public class LdapLibrary extends AnnotationLibrary {
         }
         return super.getKeywordDocumentation(keywordName);
     }
-   
-    @RobotKeyword("Makes a connection to specified LDAP server")
+    
+    @RobotKeyword("Makes a connection to specified LDAP server. Prefix _host_ with 'ldaps://' to make an SSL connection.")
     @ArgumentNames({"host", "port", "bindDN", "password"})
-    public void connectToLdap(String host, Integer port, String bindDN, String password) throws LDAPException {
-        if(ldapConnection != null && ldapConnection.isConnected()) {
-            System.out.println("*WARN* There is already an LDAP connection open");
-            return;
+    public void connectToLdap(String host, Integer port, String bindDN, String password) throws LDAPException, GeneralSecurityException {
+        
+        if(!host.startsWith("ldap://") && !host.startsWith("ldaps://")) {
+            host = "ldap://" + host;
         }
-       
-        System.out.println("*INFO* Connecting to "+host+":"+port+" as "+bindDN);
-       
-        ldapConnection = new LDAPConnection(host, port, bindDN, password);
+        
+        String connectionName = host+":"+port+" as "+bindDN;
+        
+        if(ldapConnection != null) {
+            if (!ldapConnection.getConnectionName().equals(connectionName)) {
+                System.out.println("*WARN* There is already a connection to "+ldapConnection.getConnectionName()+". Going to reconnect to "+connectionName+".");
+                
+            } else if(ldapConnection.isConnected()) {
+                System.out.println("*INFO* There is already an LDAP connection open");
+                return;
+            }
+            ldapConnection.close();
+        }
+        
+        if(host.startsWith("ldaps://")) {
+            if(sslSocketFactory == null ) {
+                sslSocketFactory = sslUtil.createSSLSocketFactory();
+            }
+            ldapConnection = new LDAPConnection(sslSocketFactory);
+        } else {
+            ldapConnection = new LDAPConnection();
+        }
+        
+        ldapConnection.setConnectionName(connectionName);
+        
+        System.out.println("*INFO* Connecting to "+connectionName);
+        
+        ldapConnection.connect(host.substring(host.lastIndexOf("/")+1), port);
+        ldapConnection.bind(bindDN, password);
     }
-   
+    
+    @RobotKeyword("Returns the attributes of a single LDAP entry.\n\n" +
+                    "If one ore more attribute names are specified, only those attributes will be returned. Otherwise all attributes will be returned.\n\n" + 
+                    "Example:\n" +
+                    "| ${entry}= | Get Ldap Entry | o=mydomain,c=com | SUB | uid=john | uid | mailAlternateAddress |\n" +
+                    "| @{uid}= | Get From Dictionary | ${entry} | uid | #Check a single value attribute |\n" +
+                    "| Should Be Equal | @{uid} |  john |\n" +
+                    "| @{mailAlternateAddress}= | Get From Dictionary | ${entry} | mailAlternateAddress | #Check a multi value attribute |\n" +
+                    "| Length Should Be | ${mailAlternateAddress} | 3 |\n" +
+                    "| List Should Contain Value | ${mailAlternateAddress} | alias1@mydomain.com |\n" +
+                    "| List Should Contain Value | ${mailAlternateAddress} | alias2@mydomain.com |\n" +
+                    "| List Should Contain Value | ${mailAlternateAddress} | alias3@mydomain.com |")
+    @ArgumentNames({"baseDn", "scope", "filter", "*attributes"})
+    public HashMap<String, Object> getLdapEntry(String basedn, String scope, String filter, String[] attributes) throws LDAPSearchException, LDAPException {
+        
+        if(attributes == null) {
+            attributes = new String[] {"*"};
+        }
+        
+        SearchResult s = this.performSearch(basedn, scope, filter, attributes);
+       
+        if(s.getEntryCount() != 1) {
+            throw new RuntimeException("LDAP search returned "+s.getEntryCount()+" entries");
+        }
+        
+        HashMap<String, Object> entryMap = new HashMap<String, Object>();
+        
+        SearchResultEntry entry = s.getSearchEntries().get(0);
+        
+        Collection<Attribute> entryAttributes = entry.getAttributes();
+        for(Attribute attribute : entryAttributes) {
+            entryMap.put(attribute.getBaseName(), attribute.getValues());
+        }
+        
+        return entryMap;
+    }
+    
     @RobotKeyword("Fails if LDAP search does not return a single entry")
     @ArgumentNames({"baseDn", "scope", "filter"})
     public void ldapSearchShouldReturnSingleEntry(String basedn, String scope, String filter) throws LDAPSearchException {
@@ -87,7 +158,7 @@ public class LdapLibrary extends AnnotationLibrary {
         SearchResult s = this.performSearch(basedn, scope, filter, (String)null);
        
         if(s.getEntryCount() != 1) {
-            throw new RuntimeException("*FAIL* LDAP search returned "+s.getEntryCount()+" entries");
+            throw new RuntimeException("LDAP search returned "+s.getEntryCount()+" entries");
         }
     }
    
@@ -96,9 +167,9 @@ public class LdapLibrary extends AnnotationLibrary {
     public void ldapSearchShouldReturnEntries(String basedn, String scope, String filter) throws LDAPSearchException {
        
         SearchResult s = this.performSearch(basedn, scope, filter, (String)null);
-       
+        
         if(s.getEntryCount() == 0) {
-            throw new RuntimeException("*FAIL* LDAP search did not return any entries");
+            throw new RuntimeException("LDAP search did not return any entries");
         }
     }
    
@@ -109,7 +180,7 @@ public class LdapLibrary extends AnnotationLibrary {
         SearchResult s = this.performSearch(basedn, scope, filter, (String)null);
        
         if(s.getEntryCount() != 0) {
-            throw new RuntimeException("*FAIL* LDAP search returned "+s.getEntryCount()+" entries");
+            throw new RuntimeException("LDAP search returned "+s.getEntryCount()+" entries");
         }
     }
    
@@ -120,7 +191,7 @@ public class LdapLibrary extends AnnotationLibrary {
         SearchResult s = this.performSearch(basedn, scope, filter, attribute);
        
         if(s.getEntryCount() != 1) {
-            throw new RuntimeException("*FAIL* LDAP search returned "+s.getEntryCount()+" entries");
+            throw new RuntimeException("LDAP search returned "+s.getEntryCount()+" entries");
         }
        
         List<SearchResultEntry> entries = s.getSearchEntries();
@@ -144,7 +215,7 @@ public class LdapLibrary extends AnnotationLibrary {
    
     private SearchResult performSearch (String base, String scopeStr, String filter, java.lang.String... attributes) throws LDAPSearchException {
         if (ldapConnection == null) {
-            throw new RuntimeException("*EXCEPTION* There is no LDAP connection open");
+            throw new RuntimeException("There is no LDAP connection open");
         }
        
         SearchScope scope;
@@ -156,11 +227,11 @@ public class LdapLibrary extends AnnotationLibrary {
         } else if(scopeStr.equalsIgnoreCase("SUB")) {
             scope = SearchScope.SUB;
         } else {
-            throw new RuntimeException("*EXCEPTION* scope should be BASE, ONE or SUB.");
+            throw new RuntimeException("Scope should be BASE, ONE or SUB.");
         }
        
         if (ldapConnection == null) {
-            throw new RuntimeException("*EXCEPTION* There is no LDAP connection open");
+            throw new RuntimeException("There is no LDAP connection open");
         }
        
         if(attributes == null) {
