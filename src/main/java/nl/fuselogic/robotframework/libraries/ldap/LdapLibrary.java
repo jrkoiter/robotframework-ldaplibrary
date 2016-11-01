@@ -28,6 +28,10 @@ import com.unboundid.ldap.sdk.SearchResultEntry;
 import com.unboundid.ldap.sdk.SearchScope;
 import com.unboundid.util.ssl.SSLUtil;
 import com.unboundid.util.ssl.TrustAllTrustManager;
+
+import com.unboundid.ldap.sdk.DeleteRequest;
+import com.unboundid.ldap.sdk.LDAPResult;
+import com.unboundid.ldap.sdk.ResultCode;
  
 import java.io.InputStream;
 import java.security.GeneralSecurityException;
@@ -200,6 +204,29 @@ public class LdapLibrary extends AnnotationLibrary {
         System.out.println("*INFO* Returning value '"+value+"'");
        
         return value;
+    }
+
+    @RobotKeyword("Deletes all specified entries from the LDAP server")
+    @ArgumentNames({"baseDn", "scope", "filter"})
+    public void deleteFromLdap(String basedn, String scope, String filter) throws LDAPException {
+        if(ldapConnection == null || !ldapConnection.isConnected()) {
+            System.out.println("*WARN* There is no current connection to an LDAP server");
+            return;
+        }
+
+        SearchResult s = this.performSearch(basedn, scope, filter, (String)null);
+
+        if (s.getEntryCount() == 0) {
+            System.out.println("*WARN* No entries to delete.");
+        }
+
+        List<SearchResultEntry> entries = s.getSearchEntries();
+        for(SearchResultEntry entry : entries){
+            String dn = entry.getDN();
+            DeleteRequest deleteRequest = new DeleteRequest(dn);
+            ldapConnection.delete(deleteRequest);
+        }
+
     }
    
     @RobotKeyword("Disconnects from LDAP server")
